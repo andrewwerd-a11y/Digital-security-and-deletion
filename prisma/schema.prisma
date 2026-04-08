@@ -1,0 +1,396 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum OntologyBranch { DEVICES ACCOUNTS APPS FILES CLOUD_STORAGE EMAIL CONTACTS PAYMENTS_SUBSCRIPTIONS SECURITY_ACCESS BACKUPS_ARCHIVES UNKNOWN_NEEDS_REVIEW }
+enum ObjectType { DEVICE ACCOUNT APP FILE FOLDER BROWSER_PROFILE SUBSCRIPTION CREDENTIAL_REFERENCE SESSION_OR_TOKEN_REFERENCE RECOVERY_METHOD BACKUP_OR_ARCHIVE PAYMENT_SOURCE CLOUD_CONTAINER UNKNOWN_OBJECT }
+enum RelationshipType { OWNS CONTAINS AUTHENTICATES RECOVERS BILLS SYNCS DEPENDS_ON DUPLICATES BACKS_UP LINKED_TO INSTALLED_ON EXPORTED_FROM IMPORTED_TO SHARED_WITH UNKNOWN_RELATION }
+enum Confidence { LOW MEDIUM HIGH }
+enum EvidenceOriginType { OBSERVED INFERRED }
+enum ObjectState { DISCOVERED NORMALIZED NEEDS_REVIEW READY BLOCKED }
+enum ReviewState { UNREVIEWED IN_REVIEW REVIEWED REJECTED }
+enum PreserveState { NOT_STARTED IN_PROGRESS PRESERVED FAILED }
+enum VerificationState { NOT_VERIFIED IN_PROGRESS VERIFIED PARTIAL FAILED NOT_VERIFIABLE }
+enum Risk { LOW MEDIUM HIGH CRITICAL }
+
+enum AnalysisConfidence { CONFIRMED INFERRED SUSPECTED UNKNOWN }
+enum AnalysisSensitivity { PUBLIC LOW_SENSITIVITY PRIVATE SENSITIVE CRITICAL }
+enum AnalysisRisk { INFORMATIONAL CLUTTER PRESERVE_IMPORTANT PRIVACY_RISK SECURITY_RISK CRITICAL_DEPENDENCY }
+enum RecommendationIntent { KEEP KEEP_AND_MIGRATE ARCHIVE ARCHIVE_BEFORE_REMOVAL REVIEW REVOKE_FIRST DELETE_LATER REPLACE DISCONNECT_BEFORE_DELETE EXCLUDE_FROM_RESTORE SAFE_TO_REMOVE_LATER UNKNOWN }
+enum ActionClass { READ PRESERVE SIMULATE EXECUTE VERIFY }
+enum WorkflowType { DISCOVERY PRESERVATION READINESS EXECUTION REPORTING }
+enum WorkflowState { PENDING RUNNING BLOCKED COMPLETED FAILED PARTIAL }
+enum TaskType { DISCOVER CLASSIFY PRESERVE EVALUATE_POLICY APPROVE VERIFY }
+enum TaskState { PENDING RUNNING BLOCKED COMPLETED FAILED PARTIAL }
+enum FailureCategory { VALIDATION POLICY EXTERNAL INTERNAL }
+enum BlockReason { POLICY_BLOCK APPROVAL_REQUIRED MISSING_EVIDENCE DEPENDENCY_UNRESOLVED }
+enum PolicyDecisionResult { ALLOW DENY REQUIRE_APPROVAL }
+enum PolicyDecisionOutcome {
+  allowed
+  allowed_with_review
+  allowed_with_additional_prerequisites
+  blocked_pending_preservation
+  blocked_pending_dependency_resolution
+  blocked_pending_approval
+  blocked_by_policy
+  forbidden
+}
+enum ApprovalType { EXECUTION POLICY_EXCEPTION }
+enum ApprovalState { PENDING APPROVED REJECTED EXPIRED }
+enum ReadinessResult { ready ready_with_warnings blocked }
+
+// schema group: core_objects
+model CoreObject {
+  id                String @id @default(uuid())
+  branch            OntologyBranch
+  objectType        ObjectType
+  externalRef       String
+  displayName       String
+  objectState       ObjectState
+  reviewState       ReviewState
+  preserveState     PreserveState
+  verificationState VerificationState
+  confidence        Confidence
+  origin            EvidenceOriginType
+  provenanceSource  String
+  notes             String?
+  aliases           String[]
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  outgoingRelationships CoreRelationship[] @relation("RelationshipFrom")
+  incomingRelationships CoreRelationship[] @relation("RelationshipTo")
+
+  @@index([branch, objectType])
+  @@index([displayName])
+  @@index([externalRef])
+}
+
+// schema group: core_relationships
+model CoreRelationship {
+  id               String @id @default(uuid())
+  fromObjectId     String
+  toObjectId       String
+  relationshipType RelationshipType
+  confidence       Confidence
+  origin           EvidenceOriginType
+  provenanceSource String
+  notes            String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  fromObject CoreObject @relation("RelationshipFrom", fields: [fromObjectId], references: [id])
+  toObject   CoreObject @relation("RelationshipTo", fields: [toObjectId], references: [id])
+
+  @@index([fromObjectId])
+  @@index([toObjectId])
+  @@index([relationshipType])
+}
+
+// schema group: source_evidence
+model DiscoveryRun {
+  id          String   @id @default(uuid())
+  workflowId  String
+  scope       String
+  rootPath    String
+  summary     String?
+  startedAt   DateTime
+  completedAt DateTime?
+
+  findings DiscoveryFinding[]
+  evidence EvidenceRecord[]
+
+  @@index([workflowId])
+}
+
+model DiscoveryFinding {
+  id             String   @id @default(uuid())
+  discoveryRunId String
+  locator        String
+  findingType    String
+  summary        String
+  metadataJson   String
+  createdAt      DateTime @default(now())
+
+  discoveryRun DiscoveryRun @relation(fields: [discoveryRunId], references: [id])
+  evidence     EvidenceRecord[]
+
+  @@index([discoveryRunId])
+}
+
+model EvidencePayloadRef {
+  id        String   @id @default(uuid())
+  locator   String
+  checksum  String?
+  createdAt DateTime @default(now())
+
+  evidence EvidenceRecord[]
+}
+
+model EvidenceRecord {
+  id                 String   @id @default(uuid())
+  discoveryRunId     String
+  discoveryFindingId String?
+  objectId           String?
+  sourceSystem       String
+  locator            String
+  summary            String
+  payloadRefId       String?
+  createdAt          DateTime @default(now())
+
+  discoveryRun     DiscoveryRun      @relation(fields: [discoveryRunId], references: [id])
+  discoveryFinding DiscoveryFinding? @relation(fields: [discoveryFindingId], references: [id])
+  payloadRef       EvidencePayloadRef? @relation(fields: [payloadRefId], references: [id])
+
+  @@index([discoveryRunId])
+  @@index([discoveryFindingId])
+}
+
+
+model NormalizationRun {
+  id             String   @id @default(uuid())
+  discoveryRunId String
+  workflowId     String
+  summary        String
+  createdAt      DateTime @default(now())
+
+  unresolvedCandidates UnresolvedCandidate[]
+  duplicateCandidates  DuplicateCandidate[]
+
+  @@index([discoveryRunId])
+  @@index([workflowId])
+}
+
+model UnresolvedCandidate {
+  id               String   @id @default(uuid())
+  normalizationRunId String
+  discoveryFindingId String
+  reason           String
+  locator          String
+  createdAt        DateTime @default(now())
+
+  normalizationRun NormalizationRun @relation(fields: [normalizationRunId], references: [id])
+
+  @@index([normalizationRunId])
+}
+
+model DuplicateCandidate {
+  id               String   @id @default(uuid())
+  normalizationRunId String
+  objectAId        String
+  objectBId        String
+  rationale        String
+  createdAt        DateTime @default(now())
+
+  normalizationRun NormalizationRun @relation(fields: [normalizationRunId], references: [id])
+
+  @@index([normalizationRunId])
+}
+
+model SourceEvidence {
+  id           String @id @default(uuid())
+  objectId     String
+  sourceSystem String
+  path         String?
+  createdAt    DateTime @default(now())
+}
+
+// schema group: classification_and_recommendation
+model Classification {
+  id                  String @id @default(uuid())
+  objectId            String
+  risk                AnalysisRisk
+  sensitivity         AnalysisSensitivity
+  confidence          AnalysisConfidence
+  preserveFirstBlocker Boolean
+  rationale           String
+  explanation         String
+  createdAt           DateTime @default(now())
+
+  @@index([objectId])
+}
+model Recommendation {
+  id                  String @id @default(uuid())
+  objectId            String
+  intent              RecommendationIntent
+  preserveFirstBlocker Boolean
+  rationale           String
+  explanation         String
+  createdAt           DateTime @default(now())
+
+  @@index([objectId])
+}
+
+// schema group: workflows_and_tasks
+model Workflow {
+  id          String    @id @default(uuid())
+  type        WorkflowType
+  state       WorkflowState
+  startedAt   DateTime
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  tasks Task[]
+}
+model Task {
+  id              String   @id @default(uuid())
+  workflowId      String
+  type            TaskType
+  state           TaskState
+  progressPercent Int      @default(0)
+  failureCategory FailureCategory?
+  blockReason     BlockReason?
+  errorMessage    String?
+  startedAt       DateTime
+  completedAt     DateTime?
+  createdAt       DateTime @default(now())
+
+  workflow Workflow @relation(fields: [workflowId], references: [id])
+
+  @@index([workflowId])
+}
+model QueueItem {
+  id          String @id @default(uuid())
+  taskId      String
+  queueType   String
+  state       TaskState
+  blockReason BlockReason?
+  detail      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// schema group: policy_and_approvals
+model PolicyDecision {
+  id              String @id @default(uuid())
+  workflowId      String?
+  actionClass     ActionClass
+  actionType      String
+  targetObjectIds String[]
+  scopeSummary    String
+  trustProfile    String
+  result          PolicyDecisionOutcome
+  rationale       String
+  createdAt       DateTime @default(now())
+
+  @@index([workflowId])
+}
+model Approval {
+  id           String @id @default(uuid())
+  decisionId   String?
+  type         ApprovalType
+  state        ApprovalState
+  targetKind   String
+  targetId     String
+  approvedScope String
+  reason       String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([targetKind, targetId])
+}
+
+model SimulationRecord {
+  id                  String @id @default(uuid())
+  actionCandidateType String
+  actionType          String
+  targetObjectIds     String[]
+  requestedScope      String
+  trustProfile        String
+  notes               String?
+  consequenceSummary  String
+  createdAt           DateTime @default(now())
+}
+
+model ReadinessRecord {
+  id           String @id @default(uuid())
+  scopeKey      String
+  workflowId    String?
+  result        ReadinessResult
+  blockerCount  Int
+  warningCount  Int
+  blockersJson  String
+  warningsJson  String
+  createdAt     DateTime @default(now())
+
+  @@index([scopeKey, createdAt])
+}
+
+// schema group: preservation_and_vault
+model VaultRecord {
+  id              String @id @default(uuid())
+  workflowId      String
+  objectId        String
+  vaultPath       String
+  mode            String
+  reason          String
+  notes           String?
+  integrityStatus String
+  checksum        String?
+  createdAt       DateTime @default(now())
+
+  @@index([workflowId])
+  @@index([objectId])
+}
+model RestoreManifest {
+  id               String @id @default(uuid())
+  workflowId       String
+  summary          String
+  validationStatus String
+  itemCount        Int
+  createdAt        DateTime @default(now())
+
+  @@index([workflowId])
+}
+
+// schema group: execution_and_verification
+model Action {
+  id          String @id @default(uuid())
+  objectId    String
+  actionClass ActionClass
+  createdAt   DateTime @default(now())
+}
+model Verification {
+  id                String @id @default(uuid())
+  actionId          String
+  verificationState VerificationState
+  createdAt         DateTime @default(now())
+}
+
+// schema group: audit_and_reports
+model AuditEvent {
+  id        String @id @default(uuid())
+  eventType String
+  payload   String?
+  createdAt DateTime @default(now())
+}
+model Report {
+  id         String @id @default(uuid())
+  reportType String
+  location   String?
+  createdAt  DateTime @default(now())
+}
+
+// schema group: read_models
+model ReadModel {
+  id        String @id
+  modelType String
+  modelKey  String
+  payload   String
+  createdAt DateTime @default(now())
+
+  @@index([modelType, modelKey])
+}
+
+// schema group: system_support
+model Setting {
+  id        String @id @default(uuid())
+  key       String @unique
+  value     String
+  createdAt DateTime @default(now())
+}
