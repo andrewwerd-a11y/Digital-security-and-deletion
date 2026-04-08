@@ -1,0 +1,200 @@
+import Fastify from "fastify";
+import sensible from "@fastify/sensible";
+import {
+  ClassificationService,
+  DiscoveryOrchestrator,
+  NormalizationService,
+  ObjectRegistryService,
+  RecommendationService,
+  ReadModelProjectionService,
+  RelationshipGraphService
+} from "../domain/services/index.js";
+import { LocalDiscoveryScanner } from "../workflows/discovery/localDiscoveryScanner.js";
+import { buildRepositoryRegistry } from "../storage/repositoryRegistry.js";
+
+export async function buildServer() {
+  const app = Fastify({ logger: false });
+  await app.register(sensible);
+
+  const repositories = buildRepositoryRegistry();
+  const objectRegistryService = new ObjectRegistryService(repositories.objectRepository);
+  const relationshipGraphService = new RelationshipGraphService(repositories.relationshipRepository);
+  const discoveryOrchestrator = new DiscoveryOrchestrator(
+    repositories.workflowRepository,
+    repositories.taskRepository,
+    repositories.evidenceRepository,
+    new LocalDiscoveryScanner()
+  );
+  const normalizationService = new NormalizationService(
+    repositories.objectRepository,
+    repositories.relationshipRepository,
+    repositories.evidenceRepository,
+    repositories.workflowRepository
+  );
+  const classificationService = new ClassificationService(
+    repositories.objectRepository,
+    repositories.relationshipRepository,
+    repositories.classificationRepository,
+    repositories.recommendationRepository
+  );
+  const recommendationService = new RecommendationService(repositories.recommendationRepository);
+  const readModelProjectionService = new ReadModelProjectionService(
+    repositories.objectRepository,
+    repositories.relationshipRepository,
+    repositories.classificationRepository,
+    repositories.recommendationRepository,
+    repositories.workflowRepository,
+    repositories.taskRepository,
+    repositories.readModelRepository
+  );
+
+  app.get("/health", async () => ({ ok: true }));
+  app.get("/status", async () => ({
+    service: "digital-security-and-deletion-backend",
+    datastore: "postgresql",
+    repositories: Object.keys(repositories)
+  }));
+
+  app.post("/objects", async (request, reply) => {
+    const payload = request.body as any;
+    const created = await objectRegistryService.createObject(payload);
+    return reply.code(201).send(created);
+  });
+
+  app.patch("/objects/:id", async (request) => {
+    const payload = request.body as any;
+    const params = request.params as { id: string };
+    return objectRegistryService.updateObject(params.id, payload);
+  });
+
+  app.get("/objects/:id", async (request) => {
+    const params = request.params as { id: string };
+    return objectRegistryService.getObject(params.id);
+  });
+
+  app.get("/objects", async (request) => {
+    const query = request.query as { branch?: string; type?: string; query?: string };
+    return objectRegistryService.searchObjects({
+      branch: query.branch as any,
+      type: query.type as any,
+      query: query.query
+    });
+  });
+
+  app.post("/relationships", async (request, reply) => {
+    const payload = request.body as any;
+    const created = await relationshipGraphService.createRelationship(payload);
+    return reply.code(201).send(created);
+  });
+
+  app.patch("/relationships/:id", async (request) => {
+    const payload = request.body as any;
+    const params = request.params as { id: string };
+    return relationshipGraphService.updateRelationship(params.id, payload);
+  });
+
+  app.get("/relationships/:id", async (request) => {
+    const params = request.params as { id: string };
+    return relationshipGraphService.getRelationship(params.id);
+  });
+
+  app.get("/objects/:id/relationships", async (request) => {
+    const params = request.params as { id: string };
+    return relationshipGraphService.listRelationshipsForObject(params.id);
+  });
+
+  app.get("/objects/:id/relationships/dependencies", async (request) => {
+    const params = request.params as { id: string };
+    const query = request.query as { relationshipType?: string; depth?: string };
+
+    return relationshipGraphService.traverseDependencies(params.id, {
+      relationshipType: query.relationshipType as any,
+      depth: query.depth ? Number(query.depth) : undefined
+    });
+  });
+
+  app.get("/objects/:id/relationships/duplicates", async (request) => {
+    const params = request.params as { id: string };
+    return relationshipGraphService.findDuplicates(params.id);
+  });
+
+  app.post("/discovery/start", async (request, reply) => {
+    const payload = request.body as { rootPath: string; scope: string };
+    const started = await discoveryOrchestrator.startLocalDiscovery(payload);
+    return reply.code(202).send(started);
+  });
+
+  app.post("/discovery/rescan", async (request, reply) => {
+    const payload = request.body as { rootPath: string; scope: string };
+    const started = await discoveryOrchestrator.startLocalDiscovery(payload);
+    return reply.code(202).send(started);
+  });
+
+  app.get("/discovery/workflows/:workflowId/progress", async (request) => {
+    const params = request.params as { workflowId: string };
+    return discoveryOrchestrator.getDiscoveryProgress(params.workflowId);
+  });
+
+  app.get("/discovery/runs/:discoveryRunId/summary", async (request) => {
+    const params = request.params as { discoveryRunId: string };
+    return discoveryOrchestrator.getDiscoverySummary(params.discoveryRunId);
+  });
+
+  app.post("/normalization/start", async (request, reply) => {
+    const payload = request.body as { discoveryRunId: string };
+    const result = await normalizationService.normalizeDiscoveryRun(payload.discoveryRunId);
+    return reply.code(202).send(result);
+  });
+
+  app.post("/analysis/objects/:objectId/classify", async (request, reply) => {
+    const params = request.params as { objectId: string };
+    const output = await classificationService.classifyObject(params.objectId);
+    return reply.code(201).send(output);
+  });
+
+  app.get("/analysis/objects/:objectId/recommendations", async (request) => {
+    const params = request.params as { objectId: string };
+    return recommendationService.listRecommendationsForObject(params.objectId);
+  });
+
+  app.get("/analysis/objects/:objectId/classifications", async (request) => {
+    const params = request.params as { objectId: string };
+    return repositories.classificationRepository.listByObject(params.objectId);
+  });
+
+  app.get("/api/overview", async () => {
+    const model = await readModelProjectionService.projectOverview();
+    return JSON.parse(model.payload);
+  });
+
+  app.get("/api/tree/branch", async (request) => {
+    const query = request.query as { branch: string };
+    const model = await readModelProjectionService.projectTreeBranch(query.branch ?? "UNKNOWN_NEEDS_REVIEW");
+    return JSON.parse(model.payload);
+  });
+
+  app.get("/api/objects/:id/detail", async (request) => {
+    const params = request.params as { id: string };
+    const model = await readModelProjectionService.projectDetail(params.id);
+    return JSON.parse(model.payload);
+  });
+
+  app.get("/api/views/:viewName", async (request) => {
+    const params = request.params as { viewName: string };
+    const model = await readModelProjectionService.projectView(params.viewName);
+    return JSON.parse(model.payload);
+  });
+
+  app.get("/api/queue", async () => {
+    const model = await readModelProjectionService.projectQueueSummary();
+    return JSON.parse(model.payload);
+  });
+
+  app.get("/api/tasks/progress", async (request) => {
+    const query = request.query as { workflowId: string };
+    const model = await readModelProjectionService.projectTaskProgress(query.workflowId);
+    return JSON.parse(model.payload);
+  });
+
+  return app;
+}
