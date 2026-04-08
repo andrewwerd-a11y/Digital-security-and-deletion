@@ -1,0 +1,22 @@
+{
+  "name": "digital-security-and-deletion",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run -w @dsd/shared build && npm run -w @dsd/backend build",
+    "dev": "npm run -w @dsd/backend dev",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:validate": "prisma validate",
+    "db:migrate:status": "prisma migrate status"
+  },
+  "devDependencies": {
+    "prisma": "^5.20.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.2"
+  }
+}
