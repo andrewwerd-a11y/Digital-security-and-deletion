@@ -1,0 +1,167 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ObjectType { DEVICE ACCOUNT APP FILE CLOUD_STORAGE EMAIL CONTACT PAYMENT_SUBSCRIPTION SECURITY_ACCESS BACKUP_ARCHIVE UNKNOWN_REVIEW }
+enum RelationshipType { OWNS USES CONNECTED_TO DEPENDS_ON STORED_IN AUTHENTICATES_WITH }
+enum Confidence { LOW MEDIUM HIGH }
+enum ObjectState { DISCOVERED NORMALIZED NEEDS_REVIEW READY BLOCKED }
+enum ReviewState { UNREVIEWED IN_REVIEW REVIEWED REJECTED }
+enum PreserveState { NOT_STARTED IN_PROGRESS PRESERVED FAILED }
+enum VerificationState { NOT_VERIFIED IN_PROGRESS VERIFIED PARTIAL FAILED NOT_VERIFIABLE }
+enum Risk { LOW MEDIUM HIGH CRITICAL }
+enum ActionClass { READ PRESERVE SIMULATE EXECUTE VERIFY }
+enum WorkflowType { DISCOVERY PRESERVATION READINESS EXECUTION REPORTING }
+enum WorkflowState { PENDING RUNNING BLOCKED COMPLETED FAILED PARTIAL }
+enum TaskType { DISCOVER CLASSIFY PRESERVE EVALUATE_POLICY APPROVE VERIFY }
+enum TaskState { PENDING RUNNING BLOCKED COMPLETED FAILED PARTIAL }
+enum PolicyDecisionResult { ALLOW DENY REQUIRE_APPROVAL }
+enum ApprovalType { EXECUTION POLICY_EXCEPTION }
+enum ApprovalState { PENDING APPROVED REJECTED EXPIRED }
+
+// schema group: core_objects
+model CoreObject {
+  id                String @id @default(uuid())
+  objectType        ObjectType
+  externalRef       String
+  objectState       ObjectState
+  reviewState       ReviewState
+  preserveState     PreserveState
+  verificationState VerificationState
+  createdAt         DateTime @default(now())
+}
+
+// schema group: core_relationships
+model CoreRelationship {
+  id               String @id @default(uuid())
+  fromObjectId     String
+  toObjectId       String
+  relationshipType RelationshipType
+  confidence       Confidence
+  createdAt        DateTime @default(now())
+}
+
+// schema group: source_evidence
+model SourceEvidence {
+  id           String @id @default(uuid())
+  objectId     String
+  sourceSystem String
+  path         String?
+  createdAt    DateTime @default(now())
+}
+
+// schema group: classification_and_recommendation
+model Classification {
+  id        String @id @default(uuid())
+  objectId  String
+  risk      Risk
+  notes     String?
+  createdAt DateTime @default(now())
+}
+model Recommendation {
+  id          String @id @default(uuid())
+  objectId    String
+  actionClass ActionClass
+  summary     String?
+  createdAt   DateTime @default(now())
+}
+
+// schema group: workflows_and_tasks
+model Workflow {
+  id        String @id @default(uuid())
+  type      WorkflowType
+  state     WorkflowState
+  createdAt DateTime @default(now())
+}
+model Task {
+  id         String @id @default(uuid())
+  workflowId String
+  type       TaskType
+  state      TaskState
+  createdAt  DateTime @default(now())
+}
+model QueueItem {
+  id        String @id @default(uuid())
+  taskId    String
+  state     TaskState
+  createdAt DateTime @default(now())
+}
+
+// schema group: policy_and_approvals
+model PolicyDecision {
+  id        String @id @default(uuid())
+  objectId  String
+  result    PolicyDecisionResult
+  rationale String?
+  createdAt DateTime @default(now())
+}
+model Approval {
+  id         String @id @default(uuid())
+  decisionId String
+  type       ApprovalType
+  state      ApprovalState
+  createdAt  DateTime @default(now())
+}
+
+// schema group: preservation_and_vault
+model VaultRecord {
+  id        String @id @default(uuid())
+  objectId  String
+  vaultPath String
+  createdAt DateTime @default(now())
+}
+model RestoreManifest {
+  id            String @id @default(uuid())
+  vaultRecordId String
+  manifestPath  String
+  createdAt     DateTime @default(now())
+}
+
+// schema group: execution_and_verification
+model Action {
+  id          String @id @default(uuid())
+  objectId    String
+  actionClass ActionClass
+  createdAt   DateTime @default(now())
+}
+model Verification {
+  id                String @id @default(uuid())
+  actionId          String
+  verificationState VerificationState
+  createdAt         DateTime @default(now())
+}
+
+// schema group: audit_and_reports
+model AuditEvent {
+  id        String @id @default(uuid())
+  eventType String
+  payload   String?
+  createdAt DateTime @default(now())
+}
+model Report {
+  id         String @id @default(uuid())
+  reportType String
+  location   String?
+  createdAt  DateTime @default(now())
+}
+
+// schema group: read_models
+model ReadModel {
+  id        String @id @default(uuid())
+  modelType String
+  payload   String
+  createdAt DateTime @default(now())
+}
+
+// schema group: system_support
+model Setting {
+  id        String @id @default(uuid())
+  key       String @unique
+  value     String
+  createdAt DateTime @default(now())
+}
